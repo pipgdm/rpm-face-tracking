@@ -25,6 +25,14 @@ const options: FaceLandmarkerOptions = {
   outputFacialTransformationMatrixes: true,
 };
 
+declare global {
+  interface Window {
+    FlutterChannel?: {
+      postMessage: (message: string) => void;
+    };
+  }
+}
+
 function Avatar({ url }: { url: string }) {
   const { scene } = useGLTF(url);
   const { nodes } = useGraph(scene);
@@ -111,7 +119,22 @@ function App() {
 
   useEffect(() => {
     setup();
-  }, []);
+
+    const sendToFlutter = () => {
+      const data = {
+        blendshapes,
+        rotation: {
+          x: rotation?.x || 0,
+          y: rotation?.y || 0,
+          z: rotation?.z || 0,
+        }
+      };
+      window.FlutterChannel?.postMessage(JSON.stringify(data));
+    };
+  
+    const interval = setInterval(sendToFlutter, 100); // Send every 100ms
+    return () => clearInterval(interval);
+  }, [blendshapes, rotation]);
 
   return (
     <div className="App">
