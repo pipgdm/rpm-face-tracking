@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: face-tracking-app
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./build
+    envVars:
+      - key: NODE_VERSION
+        value: 16
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html 

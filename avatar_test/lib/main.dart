@@ -49,14 +49,26 @@ class _FaceTrackingScreenState extends State<FaceTrackingScreen> {
       ..addJavaScriptChannel(
         'FlutterChannel',
         onMessageReceived: (JavaScriptMessage message) {
-          // Receive avatar data from the TypeScript app
-          setState(() {
-            _avatarData = message.message;
-            debugPrint("Received avatar data: $_avatarData");
-          });
+          // Receive data from TypeScript app
+          final data = jsonDecode(message.message);
+          
+          if (data['type'] == 'answer' && data['data'] != null) {
+            // Process WebRTC answer
+            _processRemoteAnswer(data['data']);
+          } else if (data['type'] == 'iceCandidate' && data['data'] != null) {
+            // Process ICE candidate
+            _processRemoteIceCandidate(data['data']['candidate']);
+          } else {
+            // Avatar data
+            setState(() {
+              _avatarData = message.message;
+              debugPrint("Received avatar data: $_avatarData");
+            });
+          }
         },
       )
-      ..loadRequest(Uri.parse('http://localhost:3000'));
+      // Replace this URL with your Render deployed app URL when you have it
+      ..loadRequest(Uri.parse('https://your-render-app-name.onrender.com'));
   }
 
   Future<void> _requestPermissions() async {
