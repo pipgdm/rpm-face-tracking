@@ -1,6 +1,6 @@
 import './App.css';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { FaceLandmarker, FaceLandmarkerOptions, FilesetResolver } from "@mediapipe/tasks-vision";
 import { Color, Euler, Matrix4 } from 'three';
 import { Canvas, useFrame, useGraph } from '@react-three/fiber';
@@ -30,6 +30,14 @@ declare global {
     };
     receiveOffer: (data: any) => void;
     receiveIceCandidate: (data: any) => void;
+    isInWebView: boolean;
+    avatarData: any;
+    processExternalFrame?: (frameData: any) => void;
+    setupExternalCameraMode?: () => void;
+    processWebRTCOffer?: (offer: string) => void;
+    processWebRTCIceCandidate?: (candidate: any) => void;
+    processRemoteOffer?: (offer: any) => void;
+    cameraStream?: MediaStream;
   }
 }
 
@@ -80,91 +88,128 @@ function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [peerConnection, setPeerConnection] = useState<RTCPeerConnection | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [isWebRTCInitialized, setIsWebRTCInitialized] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("Initializing...");
 
-  const setupWebRTC = () => {
-    window.receiveOffer = async (data) => {
-      console.log('Received offer from Flutter', data);
+  // Setup WebRTC for receiving video from Flutter
+  const setupWebRTCReceiver = useCallback(() => {
+    if (isWebRTCInitialized) return;
+    
+    // Function to process an offer from Flutter
+    window.processRemoteOffer = async (offer) => {
+      console.log('Processing WebRTC offer from Flutter:', offer);
+      setStatusMessage("Received WebRTC offer from Flutter");
       
-      const configuration = {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
-        ]
-      };
-      
-      const pc = new RTCPeerConnection(configuration);
-      setPeerConnection(pc);
-      
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          // Send ICE candidate to Flutter
-          const iceCandidate = {
-            type: 'ice',
-            candidate: event.candidate.toJSON(),
-          };
-          window.FlutterChannel?.postMessage(JSON.stringify({
-            type: 'iceCandidate',
-            data: iceCandidate
-          }));
-        }
-      };
-
-      pc.ontrack = (event) => {
-        console.log('Received remote track', event.streams[0]);
-        if (videoRef.current && event.streams[0]) {
-          videoRef.current.srcObject = event.streams[0];
-          setIsConnected(true);
-        }
-      };
-
       try {
-        // Parse SDP from Flutter
-        const offerSdp = data.sdp;
-        const sdpString = JSON.stringify(offerSdp);
+        // Create RTCPeerConnection
+        const configuration = {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' }
+          ]
+        };
         
-        // Set remote description (the offer)
-        await pc.setRemoteDescription(new RTCSessionDescription({
-          type: 'offer',
-          sdp: sdpString
-        }));
+        const pc = new RTCPeerConnection(configuration);
+        setPeerConnection(pc);
+        
+        // Handle incoming ICE candidates
+        window.processWebRTCIceCandidate = (data) => {
+          console.log('Processing ICE candidate from Flutter:', data);
+          if (pc && data && data.candidate) {
+            pc.addIceCandidate(new RTCIceCandidate(data.candidate))
+              .catch(e => console.error('Error adding ICE candidate:', e));
+          }
+        };
+        
+        // Send ICE candidates to Flutter
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.log('Sending ICE candidate to Flutter:', event.candidate);
+            window.FlutterChannel?.postMessage(JSON.stringify({
+              type: 'ice',
+              candidate: event.candidate.toJSON()
+            }));
+          }
+        };
+        
+        // Handle connection state changes
+        pc.onconnectionstatechange = () => {
+          console.log('WebRTC connection state:', pc.connectionState);
+          setStatusMessage(`WebRTC: ${pc.connectionState}`);
+          
+          if (pc.connectionState === 'connected') {
+            setIsConnected(true);
+          } else if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
+            setIsConnected(false);
+          }
+        };
+        
+        // Handle incoming tracks
+        pc.ontrack = (event) => {
+          console.log('Received track from Flutter:', event);
+          if (event.streams && event.streams[0]) {
+            window.cameraStream = event.streams[0];
+            
+            if (videoRef.current) {
+              videoRef.current.srcObject = event.streams[0];
+              console.log('Video element updated with remote stream');
+              setStatusMessage("Receiving video from Flutter");
+            }
+          }
+        };
+        
+        // Set the remote description (offer from Flutter)
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        console.log('Remote description set');
         
         // Create answer
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        console.log('Local description set, sending answer to Flutter');
         
         // Send answer to Flutter
         window.FlutterChannel?.postMessage(JSON.stringify({
           type: 'answer',
-          data: pc.localDescription
+          sdp: pc.localDescription?.sdp,
+          sdpType: pc.localDescription?.type
         }));
+        
+        setIsWebRTCInitialized(true);
       } catch (error) {
-        console.error('Error handling offer:', error);
+        console.error('Error setting up WebRTC:', error);
+        setStatusMessage(`WebRTC Error: ${error}`);
       }
     };
+    
+    // Notify that we're ready to receive WebRTC connections
+    if (window.FlutterChannel) {
+      window.FlutterChannel.postMessage(JSON.stringify({
+        type: 'webviewReady',
+        status: 'Ready for WebRTC'
+      }));
+    }
+  }, [isWebRTCInitialized]);
 
-    window.receiveIceCandidate = async (data) => {
-      if (peerConnection && data.candidate) {
-        try {
-          await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (error) {
-          console.error('Error adding ICE candidate:', error);
-        }
-      }
-    };
-  };
-
+  // Set up MediaPipe face tracking
   const setup = async () => {
-    const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, options);
-
-    if (videoRef.current) {
-      videoRef.current.addEventListener("loadeddata", predict);
+    try {
+      const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+      faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, options);
+      setStatusMessage("MediaPipe initialized");
+      
+      if (videoRef.current) {
+        videoRef.current.addEventListener("loadeddata", predict);
+      }
+    } catch (error) {
+      console.error('Error setting up MediaPipe:', error);
+      setStatusMessage(`MediaPipe Error: ${error}`);
     }
   }
 
+  // Face tracking prediction function
   const predict = async () => {
     const video = videoRef.current;
     if (!video || !faceLandmarker) return;
@@ -172,28 +217,32 @@ function App() {
     let nowInMs = Date.now();
     if (lastVideoTime !== video.currentTime) {
       lastVideoTime = video.currentTime;
-      const faceLandmarkerResult = faceLandmarker.detectForVideo(video, nowInMs);
+      try {
+        const faceLandmarkerResult = faceLandmarker.detectForVideo(video, nowInMs);
 
-      if (faceLandmarkerResult.faceBlendshapes && 
-          faceLandmarkerResult.faceBlendshapes.length > 0 && 
-          faceLandmarkerResult.faceBlendshapes[0].categories) {
-        blendshapes = faceLandmarkerResult.faceBlendshapes[0].categories;
+        if (faceLandmarkerResult.faceBlendshapes && 
+            faceLandmarkerResult.faceBlendshapes.length > 0 && 
+            faceLandmarkerResult.faceBlendshapes[0].categories) {
+          blendshapes = faceLandmarkerResult.faceBlendshapes[0].categories;
 
-        if (faceLandmarkerResult.facialTransformationMatrixes && 
-            faceLandmarkerResult.facialTransformationMatrixes.length > 0) {
-          const matrix = new Matrix4().fromArray(faceLandmarkerResult.facialTransformationMatrixes[0].data);
-          rotation = new Euler().setFromRotationMatrix(matrix);
-          
-          // Send data to Flutter
-          window.FlutterChannel?.postMessage(JSON.stringify({
-            blendshapes,
-            rotation: {
-              x: rotation.x,
-              y: rotation.y,
-              z: rotation.z,
-            }
-          }));
+          if (faceLandmarkerResult.facialTransformationMatrixes && 
+              faceLandmarkerResult.facialTransformationMatrixes.length > 0) {
+            const matrix = new Matrix4().fromArray(faceLandmarkerResult.facialTransformationMatrixes[0].data);
+            rotation = new Euler().setFromRotationMatrix(matrix);
+            
+            // Send data to Flutter
+            window.avatarData = {
+              blendshapes,
+              rotation: {
+                x: rotation.x,
+                y: rotation.y,
+                z: rotation.z,
+              }
+            };
+          }
         }
+      } catch (error) {
+        console.error('Error during prediction:', error);
       }
     }
 
@@ -202,8 +251,17 @@ function App() {
 
   useEffect(() => {
     setup();
-    setupWebRTC();
-  }, []);
+    setupWebRTCReceiver();
+    
+    return () => {
+      if (peerConnection) {
+        peerConnection.close();
+      }
+      // Use type assertion to avoid TypeScript errors
+      (window as any).processRemoteOffer = undefined;
+      (window as any).processWebRTCIceCandidate = undefined;
+    };
+  }, [setupWebRTCReceiver]);
 
   return (
     <div className="App">
@@ -213,6 +271,7 @@ function App() {
         ref={videoRef} 
         autoPlay 
         playsInline
+        muted
         style={{ display: 'none' }} // Hide the video element
       ></video>
       <Canvas 
@@ -229,7 +288,7 @@ function App() {
         <Avatar url={url} />
       </Canvas>
       <div className="connection-status">
-        WebRTC Status: {isConnected ? 'Connected' : 'Waiting for connection...'}
+        {statusMessage} {isConnected ? '(Connected)' : '(Waiting)'}
       </div>
     </div>
   );

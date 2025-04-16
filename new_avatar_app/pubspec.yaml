@@ -1,4 +1,4 @@
-name: avatar_test
+name: new_avatar_app
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -36,11 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   webview_flutter: ^4.2.2
   webview_flutter_web: ^0.2.2+3
-  permission_handler: ^11.0.0
-  flutter_webrtc: ^0.9.45
-  sdp_transform: ^0.3.2
   shared_preferences: ^2.2.2
+  permission_handler: ^11.0.0
   camera: ^0.10.5+9
+  flutter_webrtc: 0.9.36
 
 dev_dependencies:
   flutter_test:

@@ -68,7 +68,7 @@ class _FaceTrackingScreenState extends State<FaceTrackingScreen> {
         },
       )
       // Replace this URL with your Render deployed app URL when you have it
-      ..loadRequest(Uri.parse('https://your-render-app-name.onrender.com'));
+      ..loadRequest(Uri.parse('https://rpm-face-tracking-u0ph.onrender.com'));
   }
 
   Future<void> _requestPermissions() async {

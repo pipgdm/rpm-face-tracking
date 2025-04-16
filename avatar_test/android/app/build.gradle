@@ -1,0 +1,12 @@
+android {
+    namespace "com.example.avatar_test"
+    compileSdkVersion flutter.compileSdkVersion
+    ndkVersion "27.0.12077973"
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    // ... rest of android block ...
+} 
